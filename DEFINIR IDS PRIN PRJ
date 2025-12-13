@@ -1,0 +1,87 @@
+rm(list = ls())
+
+system("plink.exe --file criollos --cow --chr 1-29 --allow-extra-chr --make-bed --out criollob")
+
+
+system("plink.exe --bfile criollob --cow --geno 0.1 --mind 0.1 --maf 0.05 --hwe 1e-6 --make-bed --out criolloQC")
+
+## 1. Leer el archivo FAM
+fam <- read.table("criolloQC.fam",
+                  header = FALSE,
+                  stringsAsFactors = FALSE)
+
+colnames(fam) <- c("FID","IID","PID","MID","SEX","PHENO")
+
+## 2. Definir los nuevos IDs (deben ser 69)
+new_ids <- c( "GUA-GUA2","GUA-GUA3","GUA-GUA4","GUA-GUA5","GUY-GUY6","GUY-GUY7","GUY-GUY8","GUY-GUY9", 
+              "GUY-GUY10","GUY-GUY11","GUY-GUY12","GUY-GUY13","GUY-GUY14","GUY-GUY19","GUY-GUY20", 
+              "GUY-GUY21","GUY-GUY22","GUY-GUY23","GUY-GUY24","GUY-GUY25","GUY-GUY26","GUY-GUY27", 
+              "GUY-GUY28","GUY-GUY29","GUY-GUY30","GUY-GUY31","GUY-GUY33","GUY-GUY35","GUA-GUA37", 
+              "GUA-GUA38","GUA-GUA39","GUA-GUA40","GUA-GUA41","GUA-GUA42","GUA-GUA43","GUA-GUA44", 
+              "GUA-GUA45","GUA-GUA46","GUA-GUA47","GUA-GUA49","GUA-GUA50","GUA-GUA51","GUA-GUA52", 
+              "GUY-GUY53","GUA-GUA54","GUA-GUA55","GUA-GUA56","GUA-GUA57","GUA-GUA58","GUY-GUY59", 
+              "GUY-GUY60","GUA-GUA61","GUA-GUA62","GUA-GUA63","GUA-GUA65","GUA-GUA68","GUA-GUA71", 
+              "GUA-GUA72","GUA-GUA73","GUY-GUY74","GUY-GUY75","GUY-GUY76","GUY-GUY77","GUY-GUY78", 
+              "GUY-GUY79","GUY-GUY80","GUY-GUY81","GUY-GUY82","GUY-GUY83" )
+
+## 3. Verificación crítica
+stopifnot(nrow(fam) == length(new_ids))
+
+## 4. Crear el data.frame (AQUÍ se crea `upd`)
+upd <- data.frame(
+  fam$FID,
+  fam$IID,
+  new_ids,
+  new_ids,
+  stringsAsFactors = FALSE
+)
+
+## 5. Escribir el archivo update_ids.txt
+write.table(
+  upd,
+  "update_ids.txt",
+  quote = FALSE,
+  sep = "\t",
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+ls()
+head(upd)
+
+
+# (A) Aplicar el primer renombrado: crea criolloQC_ids.*
+system("plink.exe --bfile criolloQC --cow --update-ids update_ids.txt --make-bed --out criolloQC_ids")
+
+fam <- read.table("criolloQC_ids.fam", header=FALSE, stringsAsFactors=FALSE)
+colnames(fam) <- c("FID","IID","PID","MID","SEX","PHENO")
+
+# 1) Nuevo FID: solo la raza (GUA o GUY), tomado del inicio antes del primer guion
+new_FID <- sub("^([A-Z]{3}).*$", "\\1", fam$IID)
+
+# 2) Nuevo IID: la parte final numerada (GUA2, GUY10, etc.)
+new_IID <- sub("^[A-Z]{3}-", "", fam$IID)  # quita "GUA-" o "GUY-"
+# opcional: si quiere eliminar el segundo prefijo (deja solo número): "GUA2" -> "2"
+# new_IID <- sub("^[A-Z]{3}", "", new_IID)
+
+# Validación: no debe quedar nada raro
+stopifnot(all(new_FID %in% c("GUA","GUY")))
+stopifnot(!anyDuplicated(paste(new_FID, new_IID, sep=":")))
+
+upd2 <- data.frame(fam$FID, fam$IID, new_FID, new_IID, stringsAsFactors=FALSE)
+
+write.table(upd2, "update_ids_clean.txt",
+            quote=FALSE, sep="\t",
+            row.names=FALSE, col.names=FALSE)
+
+
+# (C) Aplicar renombrado limpio: crea criolloQC_final.*
+system("plink.exe --bfile criolloQC_ids --cow --update-ids update_ids_clean.txt --make-bed --out criolloQC_final")
+
+fam_final <- read.table("criolloQC_final.fam", header=FALSE, stringsAsFactors=FALSE)
+colnames(fam_final) <- c("FID","IID","PID","MID","SEX","PHENO")
+head(fam_final[,1:2], 10)
+
+# (D) Exportar VCF FINAL desde dataset limpio (solo aquí)
+system("plink.exe --bfile criolloQC_final --cow --chr 1-29 --allow-extra-chr --snps-only just-acgt --biallelic-only strict --recode vcf --out criollopan_final")
+
