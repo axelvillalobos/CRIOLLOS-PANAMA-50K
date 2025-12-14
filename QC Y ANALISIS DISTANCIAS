@@ -1,0 +1,79 @@
+#CONTROL DE CALIDAD
+##FILTRAR SNP CON ALTA TASA DE FALLOS
+##FILTRAR SNP CON ALTA VARIABILIDAD
+##PODA DE DE SNP EN DESEQUILIBRIO DE LIGAMIENTO
+##PCA
+
+rm(list = ls())
+setwd("D:/plink/DATAQC")
+
+# 1) VCF -> BED directamente (evita PED/MAP)
+system("plink.exe --vcf criollopanama.vcf --cow --autosome --allow-no-sex --make-bed --out criollo")
+
+# 2) QC con criterios más consistentes con call rate >= 0.98
+system("plink.exe --bfile criollo --cow --autosome --geno 0.02 --mind 0.02 --maf 0.05 --hwe 1e-6 --make-bed --out criollo_QC")
+
+# 3) LD pruning
+system("plink.exe --bfile criollo_QC --cow --autosome --indep-pairwise 50 5 0.2 --out criollo_LD")
+
+# 4) Construir dataset podado
+system("plink.exe --bfile criollo_QC --cow --autosome --extract criollo_LD.prune.in --make-bed --out criollo_pruned")
+
+#opcion 1
+# 5) PCA (PLINK)
+system("plink.exe --bfile criollo_pruned --cow --autosome --pca 10 --out criollo_PCA")
+
+# Leer resultados
+pca <- read.table("criollo_PCA.eigenvec", header = FALSE)
+eigval <- scan("criollo_PCA.eigenval")
+
+# En PLINK, eigenvec típicamente: FID IID PC1 PC2 ...
+colnames(pca) <- c("FID","IID", paste0("PC", 1:(ncol(pca)-2)))
+
+# % var explicada (aprox. usando eigenval/suma)
+pve <- round((eigval / sum(eigval)) * 100, 2)
+
+
+#GRAFICAR
+if(!require("tidyverse")) {
+  install.packages("tidyverse", dependencies = TRUE)
+  library(tidyverse)
+}
+
+ggplot(pca, aes(x = PC1, y = PC2, color = FID)) +
+  geom_point(size = 2.5, alpha = 0.85) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(
+    title = "PCA (dataset pruned por LD)",
+    x = paste0("PC1 (", pve[1], "%)"),
+    y = paste0("PC2 (", pve[2], "%)")
+  ) +
+  theme_minimal()
+
+list.files(pattern = "criollo_dist")
+list.files()
+
+# OPCION MDS/PCoA basado en distancias
+
+# 5b) MDS: genera componentes a partir de matriz de distancias
+
+system("plink.exe --bfile criollo_pruned --cow --autosome --distance square --out criollo_dist")
+dist_mat <- as.matrix(read.table("criollo_dist.dist", header = FALSE))
+ids <- read.table("criollo_dist.dist.id", header = FALSE)
+colnames(ids) <- c("FID","IID")
+
+mds <- cmdscale(dist_mat, k = 5, eig = TRUE)
+mds_df <- cbind(ids, as.data.frame(mds$points))
+colnames(mds_df)[3:7] <- paste0("C", 1:5)
+
+eig_percent <- round((mds$eig / sum(mds$eig)) * 100, 2)
+
+ggplot(mds_df, aes(x = C1, y = C2, color = FID)) +
+  geom_point(size = 2, alpha = 0.85) +
+  labs(
+    title = "MDS/PCoA (basado en distancias)",
+    x = paste0("C1 (", eig_percent[1], "%)"),
+    y = paste0("C2 (", eig_percent[2], "%)")
+  ) +
+  theme_minimal()
